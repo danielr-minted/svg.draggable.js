@@ -2,11 +2,57 @@
 // extended by Florian Loch
 ;(function() {
 
+  var new_point = function(element, x, y) {
+     var p = element.doc().node.createSVGPoint();
+     p.x = x;
+     p.y = y;
+     return p;
+  };
+
+  var to_constrainer = function(constraint) {
+    return function (x, y, width, height) {
+      var result = {x:x, y:y};
+      /*
+      if (typeof constraint === 'function') {
+        var coord = constraint(x, y)
+        if (typeof coord === 'object') {
+          if (typeof coord.x != 'boolean' || coord.x) {
+            result.x = typeof coord.x === 'number' ? coord.x : x;
+          }
+          if (typeof coord.y != 'boolean' || coord.y) {
+            result.y = typeof coord.y === 'number' ? coord.y : y;
+          }
+        } else if (typeof coord === 'boolean' && coord) {
+            result.x=x;
+            result.y=y;
+        }
+      } else if (typeof constraint === 'object') {*/
+        /* keep element within constrained box */
+        /*if (constraint.minX != null && x < constraint.minX)
+          result.x = constraint.minX
+        else if (constraint.maxX != null && x > constraint.maxX - width)
+          result.x = constraint.maxX - width
+        if (constraint.minY != null && y < constraint.minY)
+          result.y = constraint.minY
+        else if (constraint.maxY != null && y > constraint.maxY - height)
+          result.y = constraint.maxY - height
+
+        console.log({startX: element.startPosition.x, startY: element.startPosition.y,
+        curX: element.x(), curY: element.y(),
+        nextX: x, nextY: y,
+        deltaX: deltaX, deltaY: deltaY});
+        // x, y setting 
+        result = {x:x, y:y};
+      }*/
+      return result;
+    }
+  };
+
   SVG.extend(SVG.Element, {
     // Make element draggable
     // Constraint might be a object (as described in readme.md) or a function in the form "function (x, y)" that gets called before every move.
     // The function can return a boolean or a object of the form {x, y}, to which the element will be moved. "False" skips moving, true moves to raw x, y.
-    draggable: function(constraint) {
+    draggable: function(constraint, with_transform) {
       var start, drag, end
         , element = this
         , parent  = this.parent._parent(SVG.Nested) || this._parent(SVG.Doc)
@@ -18,6 +64,8 @@
       /* ensure constraint object */
       constraint = constraint || {}
 
+      constrain = to_constrainer(constraint);
+
       /* start dragging */
       start = function(event) {
         event = event || window.event
@@ -26,34 +74,11 @@
         if (element.beforedrag)
           element.beforedrag(event)
 
-        /* get element bounding box */
-        var box = element.bbox()
-
-        if (element instanceof SVG.G) {
-          box.x = element.x()
-          box.y = element.y()
-
-        } else if (element instanceof SVG.Nested) {
-          box = {
-            x:      element.x()
-          , y:      element.y()
-          , width:  element.width()
-          , height: element.height()
-          }
-        }
-
         /* store event */
         element.startEvent = event
 
         /* store start position */
-        element.startPosition = {
-          x:        box.x
-        , y:        box.y
-        , width:    box.width
-        , height:   box.height
-        , zoom:     parent.viewbox().zoom
-        , rotation: element.transform('rotation') * Math.PI / 180
-        }
+        element.startPosition = {x:element.x(), y:element.y()};
 
         /* add while and end events to window */
         SVG.on(window, 'mousemove', drag)
@@ -73,47 +98,29 @@
 
         if (element.startEvent) {
           /* calculate move position */
-          var x, y
-            , rotation  = element.startPosition.rotation
-            , width     = element.startPosition.width
-            , height    = element.startPosition.height
-            , delta     = {
-                x:    event.pageX - element.startEvent.pageX,
-                y:    event.pageY - element.startEvent.pageY,
-                zoom: element.startPosition.zoom
-              }
 
-          /* caculate new position [with rotation correction] */
-          x = element.startPosition.x + (delta.x * Math.cos(rotation) + delta.y * Math.sin(rotation))  / ( element.startPosition.zoom * element.transform('scaleX') )
-          y = element.startPosition.y + (delta.y * Math.cos(rotation) + delta.x * Math.sin(-rotation)) / ( element.startPosition.zoom * element.transform('scaleY') )
+          var windowStartDrag = new_point(element, element.startEvent.pageX, element.startEvent.pageY);
+          var windowCurDrag = new_point(element, event.pageX, event.pageY);
 
+          //var parentNode = element.parent.node;
+          // x, y of the element is actually in the coordinate system of the parent.
+          var elemToScreen = element.node.getScreenCTM();
+          var screenToElem = elemToScreen.inverse();
+
+          var elementStartDrag = windowStartDrag.matrixTransform(screenToElem);
+          var elementCurDrag = windowCurDrag.matrixTransform(screenToElem);
+
+          var deltaX = elementCurDrag.x - elementStartDrag.x;
+          var deltaY = elementCurDrag.y - elementStartDrag.y;
+
+          var x = element.startPosition.x + deltaX;
+          var y = element.startPosition.y + deltaY;
           /* move the element to its new position, if possible by constraint */
-          if (typeof constraint === 'function') {
-            var coord = constraint(x, y)
-
-            if (typeof coord === 'object') {
-              if (typeof coord.x != 'boolean' || coord.x)
-                element.x(typeof coord.x === 'number' ? coord.x : x)
-              if (typeof coord.y != 'boolean' || coord.y)
-                element.y(typeof coord.y === 'number' ? coord.y : y)
-
-            } else if (typeof coord === 'boolean' && coord) {
-              element.move(x, y)
-            }
-
-          } else if (typeof constraint === 'object') {
-            /* keep element within constrained box */
-            if (constraint.minX != null && x < constraint.minX)
-              x = constraint.minX
-            else if (constraint.maxX != null && x > constraint.maxX - width)
-              x = constraint.maxX - width
-
-            if (constraint.minY != null && y < constraint.minY)
-              y = constraint.minY
-            else if (constraint.maxY != null && y > constraint.maxY - height)
-              y = constraint.maxY - height
-
-            element.move(x, y)
+          //var constrained = constrain(x, y);
+          if (with_transform) {
+            element.move(x,y);
+          } else {
+            element.attr({x:x, y:y});
           }
 
           /* invoke any callbacks */
